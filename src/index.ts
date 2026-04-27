@@ -14,6 +14,7 @@ import { helpCommand } from "./commands/help";
 export interface Env {
   DB: D1Database;
   BOT_TOKEN: string;
+  WEBHOOK_SECRET?: string; // optional — set via `wrangler secret put WEBHOOK_SECRET`
 }
 
 // ── Context types ─────────────────────────────────────────────────────────────
@@ -58,10 +59,66 @@ function makeBot(env: Env): Bot<BotContext> {
   return bot;
 }
 
+// ── Webhook secret verification ───────────────────────────────────────────────
+
+/**
+ * Compares two strings in constant time to prevent timing attacks.
+ * Falls back gracefully if the Web Crypto API is unavailable.
+ */
+async function safeCompare(a: string, b: string): Promise<boolean> {
+  // Length check is not secret-dependent, so it's safe to short-circuit here.
+  if (a.length !== b.length) return false;
+  const enc = new TextEncoder();
+  const keyBytes = enc.encode(a);
+  const msgBytes = enc.encode(b);
+  // HMAC-SHA256 of the incoming value keyed by the expected secret.
+  // Equal strings produce equal MACs — equivalent to constant-time compare.
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const mac1 = await crypto.subtle.sign("HMAC", cryptoKey, msgBytes);
+  const mac2 = await crypto.subtle.sign("HMAC", cryptoKey, keyBytes);
+  // Both MACs are the same length; XOR every byte — any non-zero means mismatch.
+  const v1 = new Uint8Array(mac1);
+  const v2 = new Uint8Array(mac2);
+  let diff = 0;
+  for (let i = 0; i < v1.length; i++) diff |= v1[i] ^ v2[i];
+  return diff === 0;
+}
+
+/**
+ * Validates the X-Telegram-Bot-Api-Secret-Token header against WEBHOOK_SECRET.
+ * Returns null if the request is allowed, or a 401 Response if it is not.
+ */
+async function verifyWebhookSecret(request: Request, env: Env): Promise<Response | null> {
+  if (!env.WEBHOOK_SECRET) {
+    // Secret not configured — warn and allow through (useful for local dev).
+    console.warn(
+      "[security] WEBHOOK_SECRET is not set. " +
+        "Set it with `wrangler secret put WEBHOOK_SECRET` before going to production."
+    );
+    return null;
+  }
+
+  const incoming = request.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
+  const ok = await safeCompare(env.WEBHOOK_SECRET, incoming);
+  if (!ok) {
+    // Do NOT log the incoming value — it may be a probing attempt.
+    console.warn("[security] Rejected request: invalid webhook secret token.");
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  return null; // Allowed
+}
+
 // ── Worker export ─────────────────────────────────────────────────────────────
 
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    // Verify Telegram's secret token before touching the bot logic.
+    const rejection = await verifyWebhookSecret(request, env);
+    if (rejection) return rejection;
+
     const bot = makeBot(env);
     return webhookCallback(bot, "cloudflare-mod")(request);
   },
