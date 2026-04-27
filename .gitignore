@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+.env
+.claude/
+gym-bot-build-guide.md
+secrets.txt

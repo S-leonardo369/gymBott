@@ -1,0 +1,22 @@
+{
+  "name": "gymbott",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-04-27",
+
+  // D1 database — replace database_id after running: wrangler d1 create gymbott-db
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gymbott-db",
+      "database_id": "ae66b258-632f-40e4-8834-7cf8d6a31ba8",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Cron triggers:
+  //   "30 3 * * *"  → 03:30 UTC = 09:00 IST  (daily expiry reminders)
+  //   "0 4 1 * *"   → 04:00 UTC on 1st = 09:30 IST (monthly billing)
+  "triggers": {
+    "crons": ["30 3 * * *", "0 4 1 * *"]
+  }
+}
