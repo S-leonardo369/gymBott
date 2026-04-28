@@ -158,7 +158,7 @@ export default {
     return webhookCallback(bot, "cloudflare-mod")(request);
   },
 
-  async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+  async scheduled(event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     switch (event.cron) {
       case "30 3 * * *":
         // Daily expiry reminders — 03:30 UTC = 09:00 IST

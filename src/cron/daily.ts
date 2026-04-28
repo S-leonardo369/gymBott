@@ -225,7 +225,10 @@ async function handleNotification(
   }
 
   // ── Build notification text ─────────────────────────────────────────────────
-  const text = buildNotificationText(member, gym.grace_period_days, dateStr, category);
+  // category is guaranteed non-D here (handleNotification is never called for D)
+  const text = buildNotificationText(
+    member, gym.grace_period_days, dateStr, category as ActionableCategory
+  );
 
   // ── Keyboard: action buttons only for A / B / C; FYI categories get none ───
   const needsButtons = category === "A" || category === "B" || category === "C";
