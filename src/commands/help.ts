@@ -2,7 +2,7 @@ import type { CommandContext } from "grammy";
 import type { BotContext } from "../index";
 import { getGymByTelegramId } from "../db/gyms";
 
-const HELP_REGISTERED = `
+const HELP_TEXT = `
 <b>GymBot Commands</b>
 
 /add — Add a new member
@@ -14,15 +14,19 @@ const HELP_REGISTERED = `
 `.trim();
 
 export async function helpCommand(ctx: CommandContext<BotContext>): Promise<void> {
-  const userId = String(ctx.from?.id);
-  if (!userId || userId === "undefined") return;
+  try {
+    const userId = String(ctx.from?.id);
+    if (!userId || userId === "undefined") return;
 
-  const gym = await getGymByTelegramId(ctx.env.DB, userId);
+    const gym = await getGymByTelegramId(ctx.env.DB, userId);
+    if (!gym) {
+      await ctx.reply("Send /start first to register your gym.");
+      return;
+    }
 
-  if (!gym) {
-    await ctx.reply("Send /start first to register your gym.");
-    return;
+    await ctx.reply(HELP_TEXT, { parse_mode: "HTML" });
+  } catch (err) {
+    console.error("[/help]", err);
+    await ctx.reply("Something went wrong. Please try again.");
   }
-
-  await ctx.reply(HELP_REGISTERED, { parse_mode: "HTML" });
 }
