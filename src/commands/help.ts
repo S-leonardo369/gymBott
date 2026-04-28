@@ -11,6 +11,8 @@ const HELP_TEXT = `
 /cancel — Cancel a member's membership
 /stats — Your gym statistics
 /help — Show this message
+
+📅 <b>Reminder schedule:</b> 3 days before, 2 days before, 1 day before, on expiry day, daily during grace, and at auto-termination.
 `.trim();
 
 export async function helpCommand(ctx: CommandContext<BotContext>): Promise<void> {

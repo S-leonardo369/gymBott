@@ -31,6 +31,14 @@ export async function getGymByTelegramId(
     .first<Gym>();
 }
 
+/** Returns all gyms where is_active = 1, ordered by id. Used by the daily cron. */
+export async function getAllActiveGyms(db: D1Database): Promise<Gym[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM gyms WHERE is_active = 1 ORDER BY id ASC")
+    .all<Gym>();
+  return results;
+}
+
 /** Inserts a new gym row and returns its auto-increment ID. */
 export async function createGym(
   db: D1Database,

@@ -151,6 +151,82 @@ export async function getMember(
 }
 
 /**
+ * Marks a member as 'expired' (was active, now past their expiry date but still
+ * within the grace window). Only updates if current status is 'active' so the
+ * call is idempotent.
+ * Returns true if a row was actually updated.
+ */
+export async function expireMember(
+  db: D1Database,
+  memberId: number,
+  gymId: number
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE members SET status = 'expired'
+       WHERE id = ? AND gym_id = ? AND status = 'active'`
+    )
+    .bind(memberId, gymId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Marks a member as 'terminated' (past the grace window — auto-terminated by cron).
+ * Guards on status IN ('active','expired') to prevent double-terminating and to
+ * never overwrite 'cancelled'.
+ * Returns true if a row was actually updated.
+ */
+export async function terminateMember(
+  db: D1Database,
+  memberId: number,
+  gymId: number
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE members SET status = 'terminated'
+       WHERE id = ? AND gym_id = ? AND status IN ('active', 'expired')`
+    )
+    .bind(memberId, gymId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Renews a member atomically via D1 batch (single transaction):
+ *   1. UPDATE members: new expiry, status='active', amount_paid
+ *   2. INSERT member_payments: renewal record
+ *
+ * Returns true if the member row was actually updated (i.e. it still existed
+ * and belonged to the gym).
+ */
+export async function renewMemberInDb(
+  db: D1Database,
+  memberId: number,
+  gymId: number,
+  amountPaid: number,
+  newExpiryDate: string,
+  paymentDate: string
+): Promise<boolean> {
+  const [updateResult] = await db.batch([
+    db
+      .prepare(
+        `UPDATE members
+         SET expiry_date = ?, status = 'active', amount_paid = ?
+         WHERE id = ? AND gym_id = ?`
+      )
+      .bind(newExpiryDate, amountPaid, memberId, gymId),
+    db
+      .prepare(
+        `INSERT INTO member_payments (member_id, amount, payment_date, covers_until)
+         VALUES (?, ?, ?, ?)`
+      )
+      .bind(memberId, amountPaid, paymentDate, newExpiryDate),
+  ]);
+  return (updateResult.meta.changes ?? 0) > 0;
+}
+
+/**
  * Cancels a member. The AND status='active' guard prevents double-cancelling.
  * Returns true if a row was actually updated.
  */

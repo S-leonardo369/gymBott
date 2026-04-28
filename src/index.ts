@@ -9,14 +9,16 @@ import { D1StorageAdapter } from "./db/sessions";
 // ── Conversations ─────────────────────────────────────────────────────────────
 import { onboardingConversation } from "./conversations/onboarding";
 import { addMemberConversation }  from "./conversations/addMember";
+import { renewMemberConversation } from "./conversations/renewal";
 
 // ── Commands ──────────────────────────────────────────────────────────────────
-import { startCommand }    from "./commands/start";
-import { helpCommand }     from "./commands/help";
-import { addCommand }      from "./commands/add";
-import { listCommand }     from "./commands/list";
-import { expiringCommand } from "./commands/expiring";
-import { cancelCommand }   from "./commands/cancel";
+import { startCommand }      from "./commands/start";
+import { helpCommand }       from "./commands/help";
+import { addCommand }        from "./commands/add";
+import { listCommand }       from "./commands/list";
+import { expiringCommand }   from "./commands/expiring";
+import { cancelCommand }     from "./commands/cancel";
+import { adminRunCronCommand } from "./admin/runCron";
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 import { listPageCallback, expiringPageCallback } from "./callbacks/list";
@@ -25,13 +27,24 @@ import {
   cancelConfirmCallback,
   cancelBackCallback,
 } from "./callbacks/cancel";
+import {
+  renewCallback,
+  notyetCallback,
+  cancelMemberCallback,
+  cancelMemberConfirmCallback,
+  cancelMemberBackCallback,
+} from "./callbacks/renewal";
+
+// ── Cron ──────────────────────────────────────────────────────────────────────
+import { runDailyCron } from "./cron/daily";
 
 // ── Environment bindings ──────────────────────────────────────────────────────
 
 export interface Env {
   DB: D1Database;
   BOT_TOKEN: string;
-  WEBHOOK_SECRET?: string; // optional — set via `wrangler secret put WEBHOOK_SECRET`
+  WEBHOOK_SECRET?: string;       // set via `wrangler secret put WEBHOOK_SECRET`
+  DEVELOPER_TELEGRAM_ID?: string; // set via `wrangler secret put DEVELOPER_TELEGRAM_ID`
 }
 
 // ── Context types ─────────────────────────────────────────────────────────────
@@ -57,7 +70,7 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.use(
     conversations<BotContext, Context>({
       storage: {
-        type: "key",
+        type:    "key",
         version: 1,
         adapter: new D1StorageAdapter(env.DB),
       },
@@ -67,23 +80,33 @@ function makeBot(env: Env): Bot<BotContext> {
   // 3. Conversation handlers (must come after conversations() middleware).
   bot.use(createConversation<BotContext, Context>(onboardingConversation, "onboarding"));
   bot.use(createConversation<BotContext, Context>(addMemberConversation,  "addMember"));
+  bot.use(createConversation<BotContext, Context>(renewMemberConversation, "renewMember"));
 
   // 4. Commands
-  bot.command("start",    startCommand);
-  bot.command("help",     helpCommand);
-  bot.command("add",      addCommand);
-  bot.command("list",     listCommand);
-  bot.command("expiring", expiringCommand);
-  bot.command("cancel",   cancelCommand);
+  bot.command("start",          startCommand);
+  bot.command("help",           helpCommand);
+  bot.command("add",            addCommand);
+  bot.command("list",           listCommand);
+  bot.command("expiring",       expiringCommand);
+  bot.command("cancel",         cancelCommand);
+  bot.command("admin_run_cron", adminRunCronCommand);
 
   // 5. Callback query handlers
   //    /list and /expiring pagination
   bot.callbackQuery(/^list:\d+$/,     listPageCallback);
   bot.callbackQuery(/^expiring:\d+$/, expiringPageCallback);
-  //    /cancel flow
+
+  //    /cancel flow (from command — uses "cancel:" prefix)
   bot.callbackQuery(/^cancelpick:\d+$/,    cancelPickCallback);
   bot.callbackQuery(/^cancelconfirm:\d+$/, cancelConfirmCallback);
   bot.callbackQuery("cancelback",          cancelBackCallback);
+
+  //    Cron notification buttons (use "cancelmember:" to avoid collision with /cancel)
+  bot.callbackQuery(/^renew:\d+$/,              renewCallback);
+  bot.callbackQuery(/^notyet:\d+$/,             notyetCallback);
+  bot.callbackQuery(/^cancelmember:\d+$/,       cancelMemberCallback);
+  bot.callbackQuery(/^cancelmemberconfirm:\d+$/, cancelMemberConfirmCallback);
+  bot.callbackQuery("cancelmemberback",          cancelMemberBackCallback);
 
   return bot;
 }
@@ -136,12 +159,14 @@ export default {
   },
 
   async scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // TODO Phase 4: daily expiry reminders
-    // TODO Phase 5: monthly developer billing
     switch (event.cron) {
       case "30 3 * * *":
+        // Daily expiry reminders — 03:30 UTC = 09:00 IST
+        await runDailyCron(env);
         break;
+
       case "0 4 1 * *":
+        // TODO Phase 5: monthly developer billing
         break;
     }
   },
