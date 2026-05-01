@@ -4,7 +4,7 @@ import { getGymByTelegramId } from "../db/gyms";
 import { listActiveMembers } from "../db/members";
 import { esc } from "../utils/format";
 import { formatDate } from "../utils/dates";
-import { ownerKeyboard, guestKeyboard } from "../utils/keyboards";
+import { ownerKeyboard } from "../utils/keyboards";
 
 const MAX_PICKER = 20;
 
@@ -18,10 +18,7 @@ export async function cancelCommand(ctx: CommandContext<BotContext>): Promise<vo
     const userId = String(ctx.from?.id);
     const gym    = await getGymByTelegramId(ctx.env.DB, userId);
     if (!gym) {
-      await ctx.reply(
-        "Please send /start first to register your gym.",
-        { reply_markup: guestKeyboard() }
-      );
+      await ctx.reply("Please send /start first to register your gym.");
       return;
     }
 
@@ -69,20 +66,23 @@ export async function cancelCommandRouter(
   const userId = String(ctx.from?.id);
 
   const hasActive =
-    ctx.conversation.active("onboarding") > 0 ||
-    ctx.conversation.active("addMember")  > 0 ||
-    ctx.conversation.active("renewMember") > 0;
+    ctx.conversation.active("onboarding")  > 0 ||
+    ctx.conversation.active("addMember")   > 0 ||
+    ctx.conversation.active("renewMember") > 0 ||
+    ctx.conversation.active("editField")   > 0 ||
+    ctx.conversation.active("adminImport") > 0;
 
   if (hasActive) {
     // Exit whichever conversations are active (exit() is a no-op when not active)
     await ctx.conversation.exit("onboarding");
     await ctx.conversation.exit("addMember");
     await ctx.conversation.exit("renewMember");
+    await ctx.conversation.exit("editField");
     await ctx.conversation.exit("adminImport");
     const gym = await getGymByTelegramId(ctx.env.DB, userId);
     await ctx.reply(
       "❌ Cancelled — nothing saved.",
-      { reply_markup: gym ? ownerKeyboard() : guestKeyboard() }
+      { reply_markup: gym ? ownerKeyboard() : undefined }
     );
     return;
   }

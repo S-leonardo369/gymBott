@@ -14,20 +14,10 @@ export function ownerKeyboard(): Keyboard {
 }
 
 /**
- * Persistent reply keyboard shown to guests who haven't registered yet.
- */
-export function guestKeyboard(): Keyboard {
-  return new Keyboard()
-    .text("🚀 Start").text("❓ Help")
-    .resized()
-    .persistent();
-}
-
-/**
  * All reply-keyboard button labels — used inside conversations to detect
  * when the user presses a keyboard button instead of typing a real answer,
- * so the conversation can call conversation.skip() and let the bot-level
- * handler process it normally.
+ * so the conversation can warn and re-wait rather than treating the label
+ * as a field value.
  */
 export const REPLY_KEYBOARD_TEXTS: readonly string[] = [
   "➕ Add member",
@@ -35,5 +25,4 @@ export const REPLY_KEYBOARD_TEXTS: readonly string[] = [
   "⚠️ Expiring",
   "❌ Cancel member",
   "❓ Help",
-  "🚀 Start",
 ] as const;

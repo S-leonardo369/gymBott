@@ -300,6 +300,80 @@ export async function renewMemberInDb(
   return (updateResult.meta.changes ?? 0) > 0;
 }
 
+// ── Field edit ────────────────────────────────────────────────────────────────
+
+export type EditableField = "name" | "phone" | "amount" | "expiry";
+
+/**
+ * Updates a single whitelisted field on a member row.
+ * Field names are mapped to DB columns via a switch — never string-interpolated.
+ * Returns the old value and whether a row was actually updated.
+ */
+export async function updateMemberField(
+  db: D1Database,
+  memberId: number,
+  gymId: number,
+  field: EditableField,
+  value: string | number | null
+): Promise<{ oldValue: string | number | null; updated: boolean }> {
+  const member = await getMember(db, memberId, gymId);
+  if (!member) return { oldValue: null, updated: false };
+
+  let stmt: D1PreparedStatement;
+  let oldValue: string | number | null;
+
+  switch (field) {
+    case "name":
+      oldValue = member.name;
+      stmt = db
+        .prepare("UPDATE members SET name = ? WHERE id = ? AND gym_id = ?")
+        .bind(value, memberId, gymId);
+      break;
+    case "phone":
+      oldValue = member.phone;
+      stmt = db
+        .prepare("UPDATE members SET phone = ? WHERE id = ? AND gym_id = ?")
+        .bind(value ?? null, memberId, gymId);
+      break;
+    case "amount":
+      oldValue = member.amount_paid;
+      stmt = db
+        .prepare("UPDATE members SET amount_paid = ? WHERE id = ? AND gym_id = ?")
+        .bind(value, memberId, gymId);
+      break;
+    case "expiry":
+      oldValue = member.expiry_date;
+      stmt = db
+        .prepare("UPDATE members SET expiry_date = ? WHERE id = ? AND gym_id = ?")
+        .bind(value, memberId, gymId);
+      break;
+  }
+
+  const result = await stmt.run();
+  return { oldValue, updated: (result.meta.changes ?? 0) > 0 };
+}
+
+// ── Full export ───────────────────────────────────────────────────────────────
+
+/**
+ * Returns ALL members for a gym (all statuses) ordered by status then name.
+ * Used by /export.
+ */
+export async function listAllMembers(
+  db: D1Database,
+  gymId: number
+): Promise<MemberRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM members
+       WHERE gym_id = ?
+       ORDER BY status, name`
+    )
+    .bind(gymId)
+    .all<MemberRow>();
+  return results;
+}
+
 /**
  * Cancels a member. The AND status='active' guard prevents double-cancelling.
  * Returns true if a row was actually updated.

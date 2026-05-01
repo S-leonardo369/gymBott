@@ -1,8 +1,8 @@
-import { InlineKeyboard, Keyboard, type Context } from "grammy";
+import { InlineKeyboard, type Context } from "grammy";
 import type { Conversation } from "@grammyjs/conversations";
 import type { BotContext } from "../index";
 import { createGym } from "../db/gyms";
-import { ownerKeyboard, guestKeyboard, REPLY_KEYBOARD_TEXTS } from "../utils/keyboards";
+import { ownerKeyboard, REPLY_KEYBOARD_TEXTS } from "../utils/keyboards";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -57,34 +57,27 @@ function validateGrace(text: string): string | null {
  * Sends `prompt`, then loops until the user sends a message that passes
  * `validator`. Returns the validated text.
  *
- * Cancel handling (no conversation.skip()):
- *   /cancel → replies "Registration cancelled", throws ConversationCancelled
- *   Other /commands or keyboard buttons → warns user to finish or /cancel, re-waits
- *
- * @param replyMarkup  Optional keyboard to attach to the prompt message.
- *                     Used for the first question to show guestKeyboard.
+ * Cancel handling:
+ *   /cancel → replies "❌ Registration cancelled. Send /start to try again."
+ *             (no keyboard) and throws ConversationCancelled
+ *   Other /commands or keyboard buttons → warns user to finish or /cancel,
+ *             re-waits (no exit)
  */
 async function ask(
   conversation: Conv,
   ctx: Context,
   prompt: string,
-  validator: (text: string) => string | null,
-  replyMarkup?: Keyboard
+  validator: (text: string) => string | null
 ): Promise<string> {
-  const sendOptions: Parameters<typeof ctx.reply>[1] = { parse_mode: "HTML" };
-  if (replyMarkup) sendOptions.reply_markup = replyMarkup;
-  await ctx.reply(prompt, sendOptions);
+  await ctx.reply(prompt, { parse_mode: "HTML" });
 
   while (true) {
     const incoming = await conversation.waitFor("message:text");
     const text = incoming.message.text.trim();
 
-    // Hard cancel — exit registration cleanly
+    // Hard cancel — exit registration cleanly; user types /start to retry
     if (text === "/cancel") {
-      await ctx.reply(
-        "❌ Registration cancelled.",
-        { reply_markup: guestKeyboard() }
-      );
+      await ctx.reply("❌ Registration cancelled. Send /start to try again.");
       throw new ConversationCancelled();
     }
 
@@ -92,8 +85,7 @@ async function ask(
     if (text.startsWith("/") || REPLY_KEYBOARD_TEXTS.includes(text)) {
       await ctx.reply(
         "⚠️ You're in the middle of registration.\n" +
-          "Send /cancel to start over, or continue answering the questions.",
-        { reply_markup: guestKeyboard() }
+          "Send /cancel to start over, or continue answering the questions."
       );
       continue;
     }
@@ -129,13 +121,12 @@ async function _onboardingConversationBody(
 
   // Wrap the entire flow in a loop so "Start over" works cleanly.
   while (true) {
-    // Q1 — gym name (attach guest keyboard so /cancel and /help are accessible)
+    // Q1 — gym name
     const gymName = await ask(
       conversation,
       ctx,
       "👋 Welcome! Let's get you set up.\n\nWhat is your <b>gym's name</b>?",
-      validateName,
-      guestKeyboard()
+      validateName
     );
 
     // Q2 — owner name

@@ -1,7 +1,7 @@
 import type { CommandContext } from "grammy";
 import type { BotContext } from "../index";
 import { getGymByTelegramId } from "../db/gyms";
-import { ownerKeyboard, guestKeyboard } from "../utils/keyboards";
+import { ownerKeyboard } from "../utils/keyboards";
 
 export async function startCommand(ctx: CommandContext<BotContext>): Promise<void> {
   const userId = String(ctx.from?.id);
@@ -26,8 +26,7 @@ export async function startCommand(ctx: CommandContext<BotContext>): Promise<voi
   if (ctx.conversation.active("onboarding") > 0) {
     await ctx.reply(
       "You're already in the registration flow — just answer the last question, " +
-        "or restart the bot if you got stuck.",
-      { reply_markup: guestKeyboard() }
+        "or restart the bot if you got stuck."
     );
     return;
   }

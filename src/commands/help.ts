@@ -1,7 +1,7 @@
 import type { CommandContext } from "grammy";
 import type { BotContext } from "../index";
 import { getGymByTelegramId } from "../db/gyms";
-import { ownerKeyboard, guestKeyboard } from "../utils/keyboards";
+import { ownerKeyboard } from "../utils/keyboards";
 
 const HELP_TEXT = `
 <b>GymBot Commands</b>
@@ -10,7 +10,9 @@ const HELP_TEXT = `
 /list — View all active members
 /expiring — Members expiring in the next 7 days
 /cancel — Cancel a member's membership
+/edit — Fix a typo in a member's name, phone, amount, or expiry
 /stats — Your gym statistics
+/export — Download all members as a CSV file
 /help — Show this message
 
 📅 <b>Reminder schedule:</b> 3 days before, 2 days before, 1 day before, on expiry day, daily during grace, and at auto-termination.
@@ -23,10 +25,7 @@ export async function helpCommand(ctx: CommandContext<BotContext>): Promise<void
 
     const gym = await getGymByTelegramId(ctx.env.DB, userId);
     if (!gym) {
-      await ctx.reply(
-        "Send /start first to register your gym.",
-        { reply_markup: guestKeyboard() }
-      );
+      await ctx.reply("Send /start first to register your gym.");
       return;
     }
 

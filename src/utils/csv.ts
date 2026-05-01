@@ -1,6 +1,13 @@
 /**
- * Minimal RFC 4180 CSV parser + row validator for /admin_import.
+ * RFC 4180 CSV parser, writer, and row validator.
  * No dependencies — works in Cloudflare Workers (V8 environment).
+ *
+ * Exports:
+ *   parseCsvRaw  — low-level parser → string[][]
+ *   parseCsv     — high-level parser → { headers, rows: Record[] }
+ *   writeCsv     — writer → CSV string (for /export)
+ *   isValidDate  — YYYY-MM-DD validator (shared with /edit validation)
+ *   validateHeaders / validateRows — for /admin_import
  */
 
 // ── Parser ────────────────────────────────────────────────────────────────────
@@ -245,4 +252,36 @@ export function validateRows(rows: Record<string, string>[]): {
   }
 
   return { errors, valid };
+}
+
+// ── Writer ────────────────────────────────────────────────────────────────────
+
+/**
+ * Serialises `rows` to a RFC 4180 CSV string with a header row.
+ * Cells containing commas, double-quotes, or newlines are quoted; internal
+ * double-quotes are escaped as "". Lines are separated by \r\n per the spec.
+ *
+ * @param headers  Column labels for the first row.
+ * @param rows     Data rows; each inner array must match headers in length.
+ *                 null / undefined cells are serialised as empty strings.
+ */
+export function writeCsv(
+  headers: string[],
+  rows: (string | number | null | undefined)[][]
+): string {
+  const escape = (v: string | number | null | undefined): string => {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    if (s.includes(",") || s.includes('"') || s.includes("\n") || s.includes("\r")) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+
+  const lines: string[] = [
+    headers.map(escape).join(","),
+    ...rows.map((row) => row.map(escape).join(",")),
+  ];
+
+  return lines.join("\r\n") + "\r\n";
 }

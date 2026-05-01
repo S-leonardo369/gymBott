@@ -11,6 +11,7 @@ import { onboardingConversation }  from "./conversations/onboarding";
 import { addMemberConversation }   from "./conversations/addMember";
 import { renewMemberConversation } from "./conversations/renewal";
 import { adminImportConversation } from "./conversations/adminImport";
+import { editFieldConversation }   from "./conversations/editField";
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 import { startCommand }      from "./commands/start";
@@ -21,9 +22,17 @@ import { expiringCommand }   from "./commands/expiring";
 import { cancelCommand, cancelCommandRouter } from "./commands/cancel";
 import { adminRunCronCommand } from "./admin/runCron";
 import { adminImportCommand }  from "./admin/import";
+import { editCommand }   from "./commands/edit";
+import { statsCommand }  from "./commands/stats";
+import { exportCommand } from "./commands/export";
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 import { listPageCallback, expiringPageCallback } from "./callbacks/list";
+import {
+  editPickCallback,
+  editFieldCallback,
+  editDoneCallback,
+} from "./callbacks/edit";
 import {
   cancelPickCallback,
   cancelConfirmCallback,
@@ -41,7 +50,7 @@ import {
 import { runDailyCron } from "./cron/daily";
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
-import { ownerKeyboard, guestKeyboard } from "./utils/keyboards";
+import { ownerKeyboard } from "./utils/keyboards";
 import { getGymByTelegramId } from "./db/gyms";
 
 // ── Environment bindings ──────────────────────────────────────────────────────
@@ -88,6 +97,7 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.use(createConversation<BotContext, Context>(addMemberConversation,   "addMember"));
   bot.use(createConversation<BotContext, Context>(renewMemberConversation, "renewMember"));
   bot.use(createConversation<BotContext, Context>(adminImportConversation, "adminImport"));
+  bot.use(createConversation<BotContext, Context>(editFieldConversation,   "editField"));
 
   // 4. Commands
   bot.command("start",          startCommand);
@@ -98,11 +108,19 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.command("cancel",         cancelCommandRouter);
   bot.command("admin_run_cron", adminRunCronCommand);
   bot.command("admin_import",   adminImportCommand);
+  bot.command("edit",           editCommand);
+  bot.command("stats",          statsCommand);
+  bot.command("export",         exportCommand);
 
   // 5. Callback query handlers
   //    /list and /expiring pagination
   bot.callbackQuery(/^list:\d+$/,     listPageCallback);
   bot.callbackQuery(/^expiring:\d+$/, expiringPageCallback);
+
+  //    /edit flow
+  bot.callbackQuery(/^editpick:\d+$/,              editPickCallback);
+  bot.callbackQuery(/^editfield:[a-z]+:\d+$/,      editFieldCallback);
+  bot.callbackQuery(/^editdone:\d+$/,              editDoneCallback);
 
   //    /cancel flow (from command — uses "cancel:" prefix)
   bot.callbackQuery(/^cancelpick:\d+$/,    cancelPickCallback);
@@ -125,7 +143,6 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.hears("⚠️ Expiring",      (ctx) => expiringCommand(ctx as any));
   bot.hears("❌ Cancel member", (ctx) => cancelCommandRouter(ctx as any));
   bot.hears("❓ Help",          (ctx) => helpCommand(ctx as any));
-  bot.hears("🚀 Start",         (ctx) => startCommand(ctx as any));
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // 7. Fallback: any unrecognised text message — re-attach the correct keyboard
@@ -135,14 +152,47 @@ function makeBot(env: Env): Bot<BotContext> {
     if (!userId || userId === "undefined") return;
     try {
       const gym = await getGymByTelegramId(ctx.env.DB, userId);
-      await ctx.reply(
-        gym
-          ? "Use the buttons below or /help to see all commands."
-          : "Send /start to register your gym.",
-        { reply_markup: gym ? ownerKeyboard() : guestKeyboard() }
-      );
+      if (gym) {
+        await ctx.reply(
+          "Use the buttons below or /help to see all commands.",
+          { reply_markup: ownerKeyboard() }
+        );
+      } else {
+        await ctx.reply("Send /start to register your gym.");
+      }
     } catch {
       // Silently ignore fallback errors — don't spam error messages for noise
+    }
+  });
+
+  // 8. Fallback: unsolicited document or photo (outside an active conversation).
+  //    Conversations intercept first, so this only fires when no conversation
+  //    is waiting for a file.
+  bot.on(["message:document", "message:photo"], async (ctx) => {
+    const userId = String(ctx.from?.id);
+    if (!userId || userId === "undefined") return;
+    try {
+      const isAdmin =
+        !!ctx.env.DEVELOPER_TELEGRAM_ID &&
+        userId === ctx.env.DEVELOPER_TELEGRAM_ID;
+
+      if (isAdmin) {
+        await ctx.reply(
+          "📎 To import members, send /admin_import <gym_id> first, " +
+            "then attach the CSV when prompted."
+        );
+      } else {
+        const gym = await getGymByTelegramId(ctx.env.DB, userId);
+        if (gym) {
+          await ctx.reply(
+            "I can only handle text messages. Use the buttons below or send /help.",
+            { reply_markup: ownerKeyboard() }
+          );
+        }
+        // Non-onboarded non-admin: stay silent
+      }
+    } catch {
+      // Silently ignore fallback errors
     }
   });
 

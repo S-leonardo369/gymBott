@@ -1,7 +1,7 @@
 import type { CommandContext } from "grammy";
 import type { BotContext } from "../index";
 import { getGymByTelegramId } from "../db/gyms";
-import { ownerKeyboard, guestKeyboard } from "../utils/keyboards";
+import { ownerKeyboard } from "../utils/keyboards";
 
 export async function addCommand(ctx: CommandContext<BotContext>): Promise<void> {
   try {
@@ -10,10 +10,7 @@ export async function addCommand(ctx: CommandContext<BotContext>): Promise<void>
 
     const gym = await getGymByTelegramId(ctx.env.DB, userId);
     if (!gym) {
-      await ctx.reply(
-        "Please send /start first to register your gym.",
-        { reply_markup: guestKeyboard() }
-      );
+      await ctx.reply("Please send /start first to register your gym.");
       return;
     }
 
