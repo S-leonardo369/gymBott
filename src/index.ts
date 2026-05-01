@@ -65,7 +65,6 @@ export interface Env {
   BOT_TOKEN: string;
   WEBHOOK_SECRET?: string;        // set via `wrangler secret put WEBHOOK_SECRET`
   DEVELOPER_TELEGRAM_ID?: string; // set via `wrangler secret put DEVELOPER_TELEGRAM_ID`
-  BACKUPS?: R2Bucket;             // R2 bucket — bind in wrangler.jsonc
 }
 
 // ── Context types ─────────────────────────────────────────────────────────────
@@ -264,12 +263,8 @@ export default {
         break;
 
       case "0 21 * * 0":
-        // Weekly R2 backup — 21:00 UTC Sunday
-        if (env.BACKUPS) {
-          await runWeeklyBackup(env as Env & { BACKUPS: R2Bucket });
-        } else {
-          console.warn("[BACKUP] BACKUPS R2 binding not configured — skipping.");
-        }
+        // Weekly Telegram backup — 21:00 UTC Sunday
+        await runWeeklyBackup(env);
         break;
 
       case "0 4 1 * *":

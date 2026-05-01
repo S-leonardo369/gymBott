@@ -14,9 +14,10 @@
   ],
 
   // Cron triggers:
-  //   "30 3 * * *"  → 03:30 UTC = 09:00 IST  (daily expiry reminders)
-  //   "0 4 1 * *"   → 04:00 UTC on 1st = 09:30 IST (monthly billing)
+  //   "30 3 * * *"  → 03:30 UTC daily        (expiry reminders)
+  //   "0 21 * * 0"  → 21:00 UTC Sunday        (weekly Telegram backup)
+  //   "0 4 1 * *"   → 04:00 UTC on 1st        (monthly billing — TODO)
   "triggers": {
-    "crons": ["30 3 * * *", "0 4 1 * *"]
+    "crons": ["30 3 * * *", "0 21 * * 0", "0 4 1 * *"]
   }
 }

@@ -1,25 +1,25 @@
 import type { Env } from "../index";
 
-// R2-extended Env — only used in this file and admin/backupNow.ts
-export type BackupEnv = Env & { BACKUPS: R2Bucket };
+// ── Result shape ──────────────────────────────────────────────────────────────
 
-// ── Last-written key is exposed so admin command can report it ────────────────
 export interface BackupResult {
-  key:     string;
-  bytes:   number;
-  retained: number;
-  deleted: number;
+  date:     string;  // YYYY-MM-DD
+  bytes:    number;  // size of the JSON payload
+  gyms:     number;  // row counts
+  members:  number;
+  payments: number;
+  sent:     boolean; // whether Telegram accepted the upload
 }
 
 // ── Run the full backup ───────────────────────────────────────────────────────
 
-export async function runWeeklyBackup(env: BackupEnv): Promise<BackupResult> {
+export async function runWeeklyBackup(env: Env): Promise<BackupResult> {
   const now  = new Date();
   const yyyy = now.getUTCFullYear();
   const mm   = String(now.getUTCMonth() + 1).padStart(2, "0");
   const dd   = String(now.getUTCDate()).padStart(2, "0");
   const date = `${yyyy}-${mm}-${dd}`;
-  const key  = `backup/${yyyy}/${mm}/${date}.json`;
+  const filename = `gymbott_backup_${date}.json`;
 
   // ── 1. Dump all tables ────────────────────────────────────────────────────
   const [gymsRes, membersRes, paymentsRes, devPaymentsRes, notificationsRes, sessionsRes] =
@@ -32,6 +32,10 @@ export async function runWeeklyBackup(env: BackupEnv): Promise<BackupResult> {
       env.DB.prepare("SELECT * FROM sessions ORDER BY key"),
     ]);
 
+  const gymsCount     = gymsRes.results.length;
+  const membersCount  = membersRes.results.length;
+  const paymentsCount = paymentsRes.results.length;
+
   const payload = {
     exported_at: now.toISOString(),
     gyms:               gymsRes.results,
@@ -42,44 +46,55 @@ export async function runWeeklyBackup(env: BackupEnv): Promise<BackupResult> {
     sessions:           sessionsRes.results,
   };
 
-  const jsonStr  = JSON.stringify(payload);
+  const jsonStr   = JSON.stringify(payload, null, 2);
   const jsonBytes = new TextEncoder().encode(jsonStr);
 
-  // ── 2. Upload to R2 ───────────────────────────────────────────────────────
-  await env.BACKUPS.put(key, jsonBytes, {
-    httpMetadata: { contentType: "application/json" },
-  });
+  // ── 2. Guard: need DEVELOPER_TELEGRAM_ID to send ─────────────────────────
+  if (!env.DEVELOPER_TELEGRAM_ID) {
+    console.warn("[BACKUP] DEVELOPER_TELEGRAM_ID not set — backup not sent.");
+    return {
+      date, bytes: jsonBytes.byteLength,
+      gyms: gymsCount, members: membersCount, payments: paymentsCount,
+      sent: false,
+    };
+  }
 
-  // ── 3. Prune backups older than 90 days ───────────────────────────────────
-  const cutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-  let retained = 0;
-  let deleted  = 0;
+  // ── 3. Send JSON as a document to the developer via Bot API ───────────────
+  const caption =
+    `🗄 Weekly backup ${date}\n` +
+    `Gyms: ${gymsCount}, Members: ${membersCount}, Payments: ${paymentsCount}`;
 
-  // List all objects under "backup/" (R2 list returns up to 1000 at a time)
-  let cursor: string | undefined;
-  do {
-    const listed = await env.BACKUPS.list({
-      prefix: "backup/",
-      cursor,
-      limit: 1000,
-    });
-
-    for (const obj of listed.objects) {
-      if (obj.uploaded < cutoff) {
-        await env.BACKUPS.delete(obj.key);
-        deleted++;
-      } else {
-        retained++;
-      }
-    }
-
-    cursor = listed.truncated ? listed.cursor : undefined;
-  } while (cursor);
-
-  console.log(
-    `[BACKUP] Wrote ${key}, size ${jsonBytes.byteLength} bytes, ` +
-    `retained ${retained}, deleted ${deleted}`
+  const form = new FormData();
+  form.append("chat_id",  env.DEVELOPER_TELEGRAM_ID);
+  form.append("caption",  caption);
+  form.append(
+    "document",
+    new Blob([jsonBytes], { type: "application/json" }),
+    filename
   );
 
-  return { key, bytes: jsonBytes.byteLength, retained, deleted };
+  const apiUrl  = `https://api.telegram.org/bot${env.BOT_TOKEN}/sendDocument`;
+  const response = await fetch(apiUrl, { method: "POST", body: form });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "(unreadable)");
+    console.error(`[BACKUP] Telegram sendDocument failed: ${response.status} — ${body}`);
+    return {
+      date, bytes: jsonBytes.byteLength,
+      gyms: gymsCount, members: membersCount, payments: paymentsCount,
+      sent: false,
+    };
+  }
+
+  console.log(
+    `[BACKUP] Sent ${filename} to Telegram, ` +
+    `${jsonBytes.byteLength} bytes, ` +
+    `gyms=${gymsCount} members=${membersCount} payments=${paymentsCount}`
+  );
+
+  return {
+    date, bytes: jsonBytes.byteLength,
+    gyms: gymsCount, members: membersCount, payments: paymentsCount,
+    sent: true,
+  };
 }
