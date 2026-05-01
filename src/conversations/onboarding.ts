@@ -1,16 +1,19 @@
-import { InlineKeyboard, type Context } from "grammy";
+import { InlineKeyboard, Keyboard, type Context } from "grammy";
 import type { Conversation } from "@grammyjs/conversations";
 import type { BotContext } from "../index";
 import { createGym } from "../db/gyms";
+import { ownerKeyboard, guestKeyboard, REPLY_KEYBOARD_TEXTS } from "../utils/keyboards";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/** Shorthand for the Conversation handle used inside this flow. */
 type Conv = Conversation<BotContext, Context>;
+
+// ── Sentinel thrown when the user cancels registration from inside ask() ──────
+// Caught in onboardingConversation() so it can return normally and clear D1 state.
+class ConversationCancelled extends Error {}
 
 // ── HTML helpers ──────────────────────────────────────────────────────────────
 
-/** Escapes characters that have special meaning in Telegram HTML parse mode. */
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -50,16 +53,51 @@ function validateGrace(text: string): string | null {
 
 // ── Helper: ask one question, re-ask on validation failure ───────────────────
 
+/**
+ * Sends `prompt`, then loops until the user sends a message that passes
+ * `validator`. Returns the validated text.
+ *
+ * Cancel handling (no conversation.skip()):
+ *   /cancel → replies "Registration cancelled", throws ConversationCancelled
+ *   Other /commands or keyboard buttons → warns user to finish or /cancel, re-waits
+ *
+ * @param replyMarkup  Optional keyboard to attach to the prompt message.
+ *                     Used for the first question to show guestKeyboard.
+ */
 async function ask(
   conversation: Conv,
   ctx: Context,
   prompt: string,
-  validator: (text: string) => string | null
+  validator: (text: string) => string | null,
+  replyMarkup?: Keyboard
 ): Promise<string> {
-  await ctx.reply(prompt, { parse_mode: "HTML" });
+  const sendOptions: Parameters<typeof ctx.reply>[1] = { parse_mode: "HTML" };
+  if (replyMarkup) sendOptions.reply_markup = replyMarkup;
+  await ctx.reply(prompt, sendOptions);
+
   while (true) {
     const incoming = await conversation.waitFor("message:text");
     const text = incoming.message.text.trim();
+
+    // Hard cancel — exit registration cleanly
+    if (text === "/cancel") {
+      await ctx.reply(
+        "❌ Registration cancelled.",
+        { reply_markup: guestKeyboard() }
+      );
+      throw new ConversationCancelled();
+    }
+
+    // Other command or keyboard button while in registration — warn and re-wait
+    if (text.startsWith("/") || REPLY_KEYBOARD_TEXTS.includes(text)) {
+      await ctx.reply(
+        "⚠️ You're in the middle of registration.\n" +
+          "Send /cancel to start over, or continue answering the questions.",
+        { reply_markup: guestKeyboard() }
+      );
+      continue;
+    }
+
     const err = validator(text);
     if (err === null) return text;
     await incoming.reply(
@@ -75,17 +113,29 @@ export async function onboardingConversation(
   conversation: Conv,
   ctx: Context
 ): Promise<void> {
-  // The user's Telegram ID is fixed; grab it from the initial context.
+  try {
+    await _onboardingConversationBody(conversation, ctx);
+  } catch (e) {
+    if (e instanceof ConversationCancelled) return;
+    throw e;
+  }
+}
+
+async function _onboardingConversationBody(
+  conversation: Conv,
+  ctx: Context
+): Promise<void> {
   const userId = String(ctx.from?.id ?? "");
 
   // Wrap the entire flow in a loop so "Start over" works cleanly.
   while (true) {
-    // Q1 — gym name
+    // Q1 — gym name (attach guest keyboard so /cancel and /help are accessible)
     const gymName = await ask(
       conversation,
       ctx,
       "👋 Welcome! Let's get you set up.\n\nWhat is your <b>gym's name</b>?",
-      validateName
+      validateName,
+      guestKeyboard()
     );
 
     // Q2 — owner name
@@ -139,7 +189,6 @@ export async function onboardingConversation(
 
     await ctx.reply(summary, { parse_mode: "HTML", reply_markup: keyboard });
 
-    // Wait for either button
     const btn = await conversation.waitForCallbackQuery([
       "onboard_save",
       "onboard_restart",
@@ -148,7 +197,6 @@ export async function onboardingConversation(
 
     if (btn.callbackQuery.data === "onboard_restart") {
       await btn.editMessageText("🔄 Starting over…");
-      // Loop continues — next iteration sends fresh questions
       continue;
     }
 
@@ -164,12 +212,13 @@ export async function onboardingConversation(
       })
     );
 
-    await btn.editMessageText(
-      `✅ All set! Welcome, <b>${esc(ownerName)}</b> from <b>${esc(gymName)}</b>! 🎉\n\n` +
-        `Use /add to add your first member, or /help anytime.`,
-      { parse_mode: "HTML" }
+    await btn.editMessageText("✅ Registration complete!");
+    await ctx.reply(
+      `🎉 Welcome, <b>${esc(ownerName)}</b> from <b>${esc(gymName)}</b>!\n\n` +
+        `Use the buttons below to get started, or /help anytime.`,
+      { parse_mode: "HTML", reply_markup: ownerKeyboard() }
     );
 
-    break; // Conversation complete
+    break;
   }
 }

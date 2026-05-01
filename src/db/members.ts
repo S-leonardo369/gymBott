@@ -1,5 +1,79 @@
 import { today, addDays } from "../utils/dates";
 
+// ── Bulk import ───────────────────────────────────────────────────────────────
+
+export interface ImportMemberInput {
+  gymId: number;
+  name: string;
+  phone: string | null;
+  amountPaid: number;
+  admissionDate: string;
+  expiryDate: string;
+}
+
+export interface BulkImportResult {
+  firstMemberId: number;
+  lastMemberId: number;
+  count: number;
+}
+
+/**
+ * Atomically inserts all members and their payment records in a single D1 batch.
+ *
+ * Statements are interleaved (member₁, payment₁, member₂, payment₂, …) so that
+ * each payment's last_insert_rowid() references its immediately-preceding member
+ * INSERT — valid because D1 batch statements run sequentially on one connection.
+ *
+ * Returns the first and last auto-assigned member IDs so the caller can report
+ * the ID range to the admin.
+ */
+export async function bulkImportMembers(
+  db: D1Database,
+  members: ImportMemberInput[]
+): Promise<BulkImportResult> {
+  if (members.length === 0) {
+    throw new Error("bulkImportMembers called with empty array");
+  }
+
+  const stmts: D1PreparedStatement[] = [];
+
+  for (const m of members) {
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO members
+             (gym_id, name, phone, amount_paid, admission_date, expiry_date, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`
+        )
+        .bind(
+          m.gymId,
+          m.name,
+          m.phone ?? null,
+          m.amountPaid,
+          m.admissionDate,
+          m.expiryDate,
+          m.admissionDate // created_at = admission_date for imported records
+        )
+    );
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO member_payments (member_id, amount, payment_date, covers_until)
+           VALUES (last_insert_rowid(), ?, ?, ?)`
+        )
+        .bind(m.amountPaid, m.admissionDate, m.expiryDate)
+    );
+  }
+
+  const results = await db.batch(stmts);
+
+  // Even indices (0, 2, 4, …) are member inserts; odd are payment inserts.
+  const firstMemberId = results[0].meta.last_row_id as number;
+  const lastMemberId  = results[results.length - 2].meta.last_row_id as number;
+
+  return { firstMemberId, lastMemberId, count: members.length };
+}
+
 export interface MemberRow {
   id: number;
   gym_id: number;

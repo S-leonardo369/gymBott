@@ -20,6 +20,17 @@ export interface CreateGymInput {
   grace_period_days: number;
 }
 
+/** Returns a gym by its numeric primary-key ID, or null if not found. */
+export async function getGymById(
+  db: D1Database,
+  gymId: number
+): Promise<Gym | null> {
+  return db
+    .prepare("SELECT * FROM gyms WHERE id = ? LIMIT 1")
+    .bind(gymId)
+    .first<Gym>();
+}
+
 /** Returns the gym row for the given Telegram user ID, or null if not registered. */
 export async function getGymByTelegramId(
   db: D1Database,

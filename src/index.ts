@@ -7,9 +7,10 @@ import {
 import { D1StorageAdapter } from "./db/sessions";
 
 // ── Conversations ─────────────────────────────────────────────────────────────
-import { onboardingConversation } from "./conversations/onboarding";
-import { addMemberConversation }  from "./conversations/addMember";
+import { onboardingConversation }  from "./conversations/onboarding";
+import { addMemberConversation }   from "./conversations/addMember";
 import { renewMemberConversation } from "./conversations/renewal";
+import { adminImportConversation } from "./conversations/adminImport";
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 import { startCommand }      from "./commands/start";
@@ -17,8 +18,9 @@ import { helpCommand }       from "./commands/help";
 import { addCommand }        from "./commands/add";
 import { listCommand }       from "./commands/list";
 import { expiringCommand }   from "./commands/expiring";
-import { cancelCommand }     from "./commands/cancel";
+import { cancelCommand, cancelCommandRouter } from "./commands/cancel";
 import { adminRunCronCommand } from "./admin/runCron";
+import { adminImportCommand }  from "./admin/import";
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 import { listPageCallback, expiringPageCallback } from "./callbacks/list";
@@ -37,6 +39,10 @@ import {
 
 // ── Cron ──────────────────────────────────────────────────────────────────────
 import { runDailyCron } from "./cron/daily";
+
+// ── Keyboards ─────────────────────────────────────────────────────────────────
+import { ownerKeyboard, guestKeyboard } from "./utils/keyboards";
+import { getGymByTelegramId } from "./db/gyms";
 
 // ── Environment bindings ──────────────────────────────────────────────────────
 
@@ -78,9 +84,10 @@ function makeBot(env: Env): Bot<BotContext> {
   );
 
   // 3. Conversation handlers (must come after conversations() middleware).
-  bot.use(createConversation<BotContext, Context>(onboardingConversation, "onboarding"));
-  bot.use(createConversation<BotContext, Context>(addMemberConversation,  "addMember"));
+  bot.use(createConversation<BotContext, Context>(onboardingConversation,  "onboarding"));
+  bot.use(createConversation<BotContext, Context>(addMemberConversation,   "addMember"));
   bot.use(createConversation<BotContext, Context>(renewMemberConversation, "renewMember"));
+  bot.use(createConversation<BotContext, Context>(adminImportConversation, "adminImport"));
 
   // 4. Commands
   bot.command("start",          startCommand);
@@ -88,8 +95,9 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.command("add",            addCommand);
   bot.command("list",           listCommand);
   bot.command("expiring",       expiringCommand);
-  bot.command("cancel",         cancelCommand);
+  bot.command("cancel",         cancelCommandRouter);
   bot.command("admin_run_cron", adminRunCronCommand);
+  bot.command("admin_import",   adminImportCommand);
 
   // 5. Callback query handlers
   //    /list and /expiring pagination
@@ -107,6 +115,36 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.callbackQuery(/^cancelmember:\d+$/,       cancelMemberCallback);
   bot.callbackQuery(/^cancelmemberconfirm:\d+$/, cancelMemberConfirmCallback);
   bot.callbackQuery("cancelmemberback",          cancelMemberBackCallback);
+
+  // 6. Reply-keyboard button handlers (hears = exact text match).
+  //    Must come AFTER command handlers so commands are always preferred.
+  //    Cast to `any` is safe — none of these handlers use ctx.match.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  bot.hears("➕ Add member",    (ctx) => addCommand(ctx as any));
+  bot.hears("📋 List members",  (ctx) => listCommand(ctx as any));
+  bot.hears("⚠️ Expiring",      (ctx) => expiringCommand(ctx as any));
+  bot.hears("❌ Cancel member", (ctx) => cancelCommandRouter(ctx as any));
+  bot.hears("❓ Help",          (ctx) => helpCommand(ctx as any));
+  bot.hears("🚀 Start",         (ctx) => startCommand(ctx as any));
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  // 7. Fallback: any unrecognised text message — re-attach the correct keyboard
+  //    and give a gentle hint.  Must be LAST so nothing else gets shadowed.
+  bot.on("message:text", async (ctx) => {
+    const userId = String(ctx.from?.id);
+    if (!userId || userId === "undefined") return;
+    try {
+      const gym = await getGymByTelegramId(ctx.env.DB, userId);
+      await ctx.reply(
+        gym
+          ? "Use the buttons below or /help to see all commands."
+          : "Send /start to register your gym.",
+        { reply_markup: gym ? ownerKeyboard() : guestKeyboard() }
+      );
+    } catch {
+      // Silently ignore fallback errors — don't spam error messages for noise
+    }
+  });
 
   return bot;
 }

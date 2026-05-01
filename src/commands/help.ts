@@ -1,6 +1,7 @@
 import type { CommandContext } from "grammy";
 import type { BotContext } from "../index";
 import { getGymByTelegramId } from "../db/gyms";
+import { ownerKeyboard, guestKeyboard } from "../utils/keyboards";
 
 const HELP_TEXT = `
 <b>GymBot Commands</b>
@@ -22,11 +23,14 @@ export async function helpCommand(ctx: CommandContext<BotContext>): Promise<void
 
     const gym = await getGymByTelegramId(ctx.env.DB, userId);
     if (!gym) {
-      await ctx.reply("Send /start first to register your gym.");
+      await ctx.reply(
+        "Send /start first to register your gym.",
+        { reply_markup: guestKeyboard() }
+      );
       return;
     }
 
-    await ctx.reply(HELP_TEXT, { parse_mode: "HTML" });
+    await ctx.reply(HELP_TEXT, { parse_mode: "HTML", reply_markup: ownerKeyboard() });
   } catch (err) {
     console.error("[/help]", err);
     await ctx.reply("Something went wrong. Please try again.");
