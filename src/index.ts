@@ -12,6 +12,7 @@ import { addMemberConversation }   from "./conversations/addMember";
 import { renewMemberConversation } from "./conversations/renewal";
 import { adminImportConversation } from "./conversations/adminImport";
 import { editFieldConversation }   from "./conversations/editField";
+import { feedbackConversation }    from "./conversations/feedback";
 
 // ── Commands ──────────────────────────────────────────────────────────────────
 import { startCommand }      from "./commands/start";
@@ -20,11 +21,14 @@ import { addCommand }        from "./commands/add";
 import { listCommand }       from "./commands/list";
 import { expiringCommand }   from "./commands/expiring";
 import { cancelCommand, cancelCommandRouter } from "./commands/cancel";
-import { adminRunCronCommand } from "./admin/runCron";
-import { adminImportCommand }  from "./admin/import";
-import { editCommand }   from "./commands/edit";
-import { statsCommand }  from "./commands/stats";
-import { exportCommand } from "./commands/export";
+import { adminRunCronCommand }   from "./admin/runCron";
+import { adminImportCommand }    from "./admin/import";
+import { adminReplyCommand }     from "./admin/reply";
+import { adminBackupNowCommand } from "./admin/backupNow";
+import { editCommand }     from "./commands/edit";
+import { statsCommand }   from "./commands/stats";
+import { exportCommand }  from "./commands/export";
+import { feedbackCommand } from "./commands/feedback";
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 import { listPageCallback, expiringPageCallback } from "./callbacks/list";
@@ -47,7 +51,8 @@ import {
 } from "./callbacks/renewal";
 
 // ── Cron ──────────────────────────────────────────────────────────────────────
-import { runDailyCron } from "./cron/daily";
+import { runDailyCron }    from "./cron/daily";
+import { runWeeklyBackup } from "./cron/backup";
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
 import { ownerKeyboard } from "./utils/keyboards";
@@ -58,8 +63,9 @@ import { getGymByTelegramId } from "./db/gyms";
 export interface Env {
   DB: D1Database;
   BOT_TOKEN: string;
-  WEBHOOK_SECRET?: string;       // set via `wrangler secret put WEBHOOK_SECRET`
+  WEBHOOK_SECRET?: string;        // set via `wrangler secret put WEBHOOK_SECRET`
   DEVELOPER_TELEGRAM_ID?: string; // set via `wrangler secret put DEVELOPER_TELEGRAM_ID`
+  BACKUPS?: R2Bucket;             // R2 bucket — bind in wrangler.jsonc
 }
 
 // ── Context types ─────────────────────────────────────────────────────────────
@@ -98,6 +104,7 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.use(createConversation<BotContext, Context>(renewMemberConversation, "renewMember"));
   bot.use(createConversation<BotContext, Context>(adminImportConversation, "adminImport"));
   bot.use(createConversation<BotContext, Context>(editFieldConversation,   "editField"));
+  bot.use(createConversation<BotContext, Context>(feedbackConversation,    "feedback"));
 
   // 4. Commands
   bot.command("start",          startCommand);
@@ -108,9 +115,12 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.command("cancel",         cancelCommandRouter);
   bot.command("admin_run_cron", adminRunCronCommand);
   bot.command("admin_import",   adminImportCommand);
-  bot.command("edit",           editCommand);
-  bot.command("stats",          statsCommand);
-  bot.command("export",         exportCommand);
+  bot.command("edit",              editCommand);
+  bot.command("stats",             statsCommand);
+  bot.command("export",            exportCommand);
+  bot.command("feedback",          feedbackCommand);
+  bot.command("admin_reply",       adminReplyCommand);
+  bot.command("admin_backup_now",  adminBackupNowCommand);
 
   // 5. Callback query handlers
   //    /list and /expiring pagination
@@ -251,6 +261,15 @@ export default {
       case "30 3 * * *":
         // Daily expiry reminders — 03:30 UTC = 09:00 IST
         await runDailyCron(env);
+        break;
+
+      case "0 21 * * 0":
+        // Weekly R2 backup — 21:00 UTC Sunday
+        if (env.BACKUPS) {
+          await runWeeklyBackup(env as Env & { BACKUPS: R2Bucket });
+        } else {
+          console.warn("[BACKUP] BACKUPS R2 binding not configured — skipping.");
+        }
         break;
 
       case "0 4 1 * *":

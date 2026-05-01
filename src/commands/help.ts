@@ -13,6 +13,7 @@ const HELP_TEXT = `
 /edit — Fix a typo in a member's name, phone, amount, or expiry
 /stats — Your gym statistics
 /export — Download all members as a CSV file
+/feedback — Send a message to the developer
 /help — Show this message
 
 📅 <b>Reminder schedule:</b> 3 days before, 2 days before, 1 day before, on expiry day, daily during grace, and at auto-termination.

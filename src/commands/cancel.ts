@@ -70,7 +70,8 @@ export async function cancelCommandRouter(
     ctx.conversation.active("addMember")   > 0 ||
     ctx.conversation.active("renewMember") > 0 ||
     ctx.conversation.active("editField")   > 0 ||
-    ctx.conversation.active("adminImport") > 0;
+    ctx.conversation.active("adminImport") > 0 ||
+    ctx.conversation.active("feedback")    > 0;
 
   if (hasActive) {
     // Exit whichever conversations are active (exit() is a no-op when not active)
@@ -79,6 +80,7 @@ export async function cancelCommandRouter(
     await ctx.conversation.exit("renewMember");
     await ctx.conversation.exit("editField");
     await ctx.conversation.exit("adminImport");
+    await ctx.conversation.exit("feedback");
     const gym = await getGymByTelegramId(ctx.env.DB, userId);
     await ctx.reply(
       "❌ Cancelled — nothing saved.",
