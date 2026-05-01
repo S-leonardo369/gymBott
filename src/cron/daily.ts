@@ -30,9 +30,14 @@
 
 import type { Env } from "../index";
 import type { Gym } from "../db/gyms";
-import { getAllActiveGyms } from "../db/gyms";
+import { getAllActiveGyms, setGymActive } from "../db/gyms";
 import { expireMember, terminateMember } from "../db/members";
 import { wasNotifiedRecently, recordNotification } from "../db/notifications";
+import {
+  getGymsPendingBills,
+  wasBillingReminderSent,
+  recordBillingReminder,
+} from "../db/billing";
 import { getMembersForCron, type MemberCronRow } from "./queries";
 import { sendMessage } from "../utils/telegram";
 import { today, addDays, formatDate, daysBetween } from "../utils/dates";
@@ -98,6 +103,14 @@ export async function runDailyCron(
       result.errors++;
       // Continue to next gym — one failure must not block others
     }
+  }
+
+  // ── Billing reminders — after member processing ────────────────────────────
+  try {
+    await processBillingReminders(env, dateStr);
+  } catch (err) {
+    console.error("[cron] Billing reminder sweep failed:", err);
+    result.errors++;
   }
 
   console.log(`[cron] Finished for ${dateStr}:`, JSON.stringify(result));
@@ -304,6 +317,80 @@ function buildNotificationText(
         `<b>${daysLeft} ${dayWord} left</b>.\n\n` +
         `Auto-terminate on grace end if not renewed.`
       );
+    }
+  }
+}
+
+// ── Billing reminders ─────────────────────────────────────────────────────────
+//
+// Runs on days 5, 10, and 15 of the month for any active gym with an unpaid
+// pending bill.  Day 15 also pauses the gym (is_active = 0).
+
+async function processBillingReminders(env: Env, dateStr: string): Promise<void> {
+  // Day-of-month: 1 = 1st, 5 = 5th, etc.
+  const dayOfMonth   = parseInt(dateStr.slice(8, 10), 10);
+  const billingMonth = dateStr.slice(0, 7); // 'YYYY-MM'
+
+  if (![5, 10, 15].includes(dayOfMonth)) return;
+
+  const pendingGyms = await getGymsPendingBills(env.DB, billingMonth);
+  if (pendingGyms.length === 0) return;
+
+  const upiId = env.DEVELOPER_UPI_ID ?? "";
+
+  for (const item of pendingGyms) {
+    try {
+      const notifType = `bill_reminder_${dayOfMonth}` as
+        "bill_reminder_5" | "bill_reminder_10" | "bill_reminder_15";
+
+      // Dedup — only one reminder per day per gym
+      const already = await wasBillingReminderSent(
+        env.DB, item.gym_id, billingMonth, notifType
+      );
+      if (already) continue;
+
+      let message: string;
+
+      if (dayOfMonth === 15) {
+        // Pause the gym before sending the message
+        await setGymActive(env.DB, item.gym_id, 0);
+        console.log(`[billing] Paused gym ${item.gym_id} (${item.gym_name}) — unpaid on day 15`);
+
+        message =
+          `🛑 Service paused for <b>${esc(item.gym_name)}</b>.\n\n` +
+          `Pay ₹${item.amount} via UPI` +
+          (upiId ? ` to <b>${esc(upiId)}</b>` : "") +
+          ` to reactivate.\n` +
+          `Your data is safe.\n\n` +
+          `Send /paid once you've paid.`;
+
+      } else if (dayOfMonth === 10) {
+        message =
+          `⚠️ Second reminder: ₹${item.amount} still pending for ` +
+          `<b>${esc(item.gym_name)}</b>.\n` +
+          `Service pauses in 5 days if unpaid.\n\n` +
+          `Pay via UPI` + (upiId ? ` to <b>${esc(upiId)}</b>` : "") + `.`;
+
+      } else { // day 5
+        message =
+          `🔔 Reminder: ₹${item.amount} due for <b>${esc(item.gym_name)}</b>.\n` +
+          `Pay via UPI` + (upiId ? ` to <b>${esc(upiId)}</b>` : "") + `.\n` +
+          `Service continues for now.`;
+      }
+
+      const sent = await sendMessage(env.BOT_TOKEN, item.telegram_user_id, message);
+      if (sent) {
+        await recordBillingReminder(env.DB, item.gym_id, billingMonth, notifType);
+        console.log(
+          `[billing] Sent ${notifType} to gym ${item.gym_id} (${item.gym_name})`
+        );
+      } else {
+        console.error(
+          `[billing] Failed to send ${notifType} to gym ${item.gym_id}`
+        );
+      }
+    } catch (err) {
+      console.error(`[billing] Error processing reminder for gym ${item.gym_id}:`, err);
     }
   }
 }

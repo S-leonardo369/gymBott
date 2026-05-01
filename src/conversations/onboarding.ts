@@ -3,6 +3,7 @@ import type { Conversation } from "@grammyjs/conversations";
 import type { BotContext } from "../index";
 import { createGym } from "../db/gyms";
 import { ownerKeyboard, REPLY_KEYBOARD_TEXTS } from "../utils/keyboards";
+import { today, addDays } from "../utils/dates";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -194,12 +195,13 @@ async function _onboardingConversationBody(
     // ── Save to DB (wrapped in external so it runs exactly once, never replayed) ──
     await conversation.external((outerCtx) =>
       createGym(outerCtx.env.DB, {
-        telegram_user_id: userId,
-        gym_name: gymName,
-        owner_name: ownerName,
-        owner_phone: phone,
+        telegram_user_id:   userId,
+        gym_name:           gymName,
+        owner_name:         ownerName,
+        owner_phone:        phone,
         default_plan_price: price,
-        grace_period_days: grace,
+        grace_period_days:  grace,
+        trial_ends_on:      addDays(today(), 60), // 2-month free trial
       })
     );
 

@@ -1,23 +1,26 @@
 export interface Gym {
-  id: number;
-  telegram_user_id: string;
-  gym_name: string;
-  owner_name: string;
-  owner_phone: string;
+  id:                number;
+  telegram_user_id:  string;
+  gym_name:          string;
+  owner_name:        string;
+  owner_phone:       string;
   grace_period_days: number;
   default_plan_price: number;
-  is_active: number;
-  dev_paid_until: string | null;
-  created_at: string;
+  is_active:         number;
+  dev_paid_until:    string | null;
+  trial_ends_on:     string | null;  // YYYY-MM-DD; NULL until migration backfill
+  last_billed_month: string | null;  // YYYY-MM; NULL until first billing cycle
+  created_at:        string;
 }
 
 export interface CreateGymInput {
-  telegram_user_id: string;
-  gym_name: string;
-  owner_name: string;
-  owner_phone: string;
+  telegram_user_id:   string;
+  gym_name:           string;
+  owner_name:         string;
+  owner_phone:        string;
   default_plan_price: number;
-  grace_period_days: number;
+  grace_period_days:  number;
+  trial_ends_on:      string; // YYYY-MM-DD; set to today + 60 days during onboarding
 }
 
 /** Returns a gym by its numeric primary-key ID, or null if not found. */
@@ -50,6 +53,18 @@ export async function getAllActiveGyms(db: D1Database): Promise<Gym[]> {
   return results;
 }
 
+/** Sets is_active for a gym. Use 1 to reactivate, 0 to pause. */
+export async function setGymActive(
+  db: D1Database,
+  gymId:    number,
+  isActive: 0 | 1
+): Promise<void> {
+  await db
+    .prepare("UPDATE gyms SET is_active = ? WHERE id = ?")
+    .bind(isActive, gymId)
+    .run();
+}
+
 /** Inserts a new gym row and returns its auto-increment ID. */
 export async function createGym(
   db: D1Database,
@@ -58,8 +73,9 @@ export async function createGym(
   const result = await db
     .prepare(
       `INSERT INTO gyms
-         (telegram_user_id, gym_name, owner_name, owner_phone, default_plan_price, grace_period_days)
-       VALUES (?, ?, ?, ?, ?, ?)`
+         (telegram_user_id, gym_name, owner_name, owner_phone,
+          default_plan_price, grace_period_days, trial_ends_on)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       input.telegram_user_id,
@@ -67,7 +83,8 @@ export async function createGym(
       input.owner_name,
       input.owner_phone,
       input.default_plan_price,
-      input.grace_period_days
+      input.grace_period_days,
+      input.trial_ends_on
     )
     .run();
   return result.meta.last_row_id as number;

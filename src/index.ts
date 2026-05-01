@@ -51,8 +51,16 @@ import {
 } from "./callbacks/renewal";
 
 // ── Cron ──────────────────────────────────────────────────────────────────────
-import { runDailyCron }    from "./cron/daily";
-import { runWeeklyBackup } from "./cron/backup";
+import { runDailyCron }      from "./cron/daily";
+import { runWeeklyBackup }   from "./cron/backup";
+import { runMonthlyBilling } from "./cron/billing";
+
+// ── Billing + admin ───────────────────────────────────────────────────────────
+import { paidCommand }          from "./commands/paid";
+import { adminMarkPaidCommand } from "./admin/markPaid";
+import { adminGymsCommand }     from "./admin/gyms";
+import { adminRevenueCommand }  from "./admin/revenue";
+import { servicePauseMiddleware } from "./middleware/servicePause";
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
 import { ownerKeyboard } from "./utils/keyboards";
@@ -65,6 +73,7 @@ export interface Env {
   BOT_TOKEN: string;
   WEBHOOK_SECRET?: string;        // set via `wrangler secret put WEBHOOK_SECRET`
   DEVELOPER_TELEGRAM_ID?: string; // set via `wrangler secret put DEVELOPER_TELEGRAM_ID`
+  DEVELOPER_UPI_ID?: string;      // set via `wrangler secret put DEVELOPER_UPI_ID`
 }
 
 // ── Context types ─────────────────────────────────────────────────────────────
@@ -105,6 +114,11 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.use(createConversation<BotContext, Context>(editFieldConversation,   "editField"));
   bot.use(createConversation<BotContext, Context>(feedbackConversation,    "feedback"));
 
+  // 3.5. Service-pause middleware — must run after conversations plugin
+  //      (so active conversations are not interrupted) and before commands
+  //      (so blocked commands never reach their handlers).
+  bot.use(servicePauseMiddleware);
+
   // 4. Commands
   bot.command("start",          startCommand);
   bot.command("help",           helpCommand);
@@ -118,8 +132,12 @@ function makeBot(env: Env): Bot<BotContext> {
   bot.command("stats",             statsCommand);
   bot.command("export",            exportCommand);
   bot.command("feedback",          feedbackCommand);
+  bot.command("paid",              paidCommand);
   bot.command("admin_reply",       adminReplyCommand);
   bot.command("admin_backup_now",  adminBackupNowCommand);
+  bot.command("admin_paid",        adminMarkPaidCommand);
+  bot.command("admin_gyms",        adminGymsCommand);
+  bot.command("admin_revenue",     adminRevenueCommand);
 
   // 5. Callback query handlers
   //    /list and /expiring pagination
@@ -268,7 +286,8 @@ export default {
         break;
 
       case "0 4 1 * *":
-        // TODO Phase 5: monthly developer billing
+        // Monthly billing — 1st of month 04:00 UTC = 09:30 IST
+        await runMonthlyBilling(env);
         break;
     }
   },
