@@ -4,6 +4,7 @@ import { getGymByTelegramId } from "../db/gyms";
 import { ownerKeyboard } from "../utils/keyboards";
 
 const HELP_TEXT = `
+<b>JK Stack</b>
 <b>GymBot Commands</b>
 
 /add — Add a new member
