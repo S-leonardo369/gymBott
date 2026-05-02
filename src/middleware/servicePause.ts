@@ -60,6 +60,7 @@ export async function servicePauseMiddleware(
     // Strip bot-username suffix (/paid@MyBot → /paid) and any args
     const baseCmd = text.split("@")[0].split(" ")[0];
     if (ALLOWED_WHEN_PAUSED.has(baseCmd)) return next();
+    if (baseCmd.startsWith("/admin_")) return next(); // dev commands never blocked
   }
 
   // Blocked — send the paused notice and consume the update
