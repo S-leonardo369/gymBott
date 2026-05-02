@@ -201,7 +201,7 @@ async function _onboardingConversationBody(
         owner_phone:        phone,
         default_plan_price: price,
         grace_period_days:  grace,
-        trial_ends_on:      addDays(today(), 60), // 2-month free trial
+        trial_ends_on:      addDays(today(), 30), // 1-month free trial
       })
     );
 

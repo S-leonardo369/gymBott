@@ -19,6 +19,10 @@ import { ownerKeyboard, REPLY_KEYBOARD_TEXTS } from "../utils/keyboards";
 
 const ALLOWED_WHEN_PAUSED = new Set(["/paid", "/feedback", "/help"]);
 
+// Navigation buttons switch keyboard pages — always allowed so a paused owner
+// can still reach page 2 to find the 💬 Feedback button.
+const NAVIGATION_BUTTONS = new Set(["➡️ More", "⬅️ Back"]);
+
 export async function servicePauseMiddleware(
   ctx: BotContext,
   next: () => Promise<void>
@@ -46,6 +50,10 @@ export async function servicePauseMiddleware(
 
   // No gym or gym is active → pass through
   if (!gym || gym.is_active !== 0) return next();
+
+  // Navigation buttons (➡️ More / ⬅️ Back) always pass through — they only
+  // switch keyboard pages and let the owner reach /feedback even when paused.
+  if (isKbButton && NAVIGATION_BUTTONS.has(text)) return next();
 
   // Gym is paused — check if this specific command is allowed
   if (isCommand) {

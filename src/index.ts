@@ -63,7 +63,7 @@ import { adminRevenueCommand }  from "./admin/revenue";
 import { servicePauseMiddleware } from "./middleware/servicePause";
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
-import { ownerKeyboard } from "./utils/keyboards";
+import { ownerKeyboard, ownerKeyboardPage1, ownerKeyboardPage2 } from "./utils/keyboards";
 import { getGymByTelegramId } from "./db/gyms";
 
 // ── Environment bindings ──────────────────────────────────────────────────────
@@ -165,11 +165,34 @@ function makeBot(env: Env): Bot<BotContext> {
   //    Must come AFTER command handlers so commands are always preferred.
   //    Cast to `any` is safe — none of these handlers use ctx.match.
   /* eslint-disable @typescript-eslint/no-explicit-any */
+
+  // Page 1 buttons
   bot.hears("➕ Add member",    (ctx) => addCommand(ctx as any));
   bot.hears("📋 List members",  (ctx) => listCommand(ctx as any));
   bot.hears("⚠️ Expiring",      (ctx) => expiringCommand(ctx as any));
   bot.hears("❌ Cancel member", (ctx) => cancelCommandRouter(ctx as any));
   bot.hears("❓ Help",          (ctx) => helpCommand(ctx as any));
+
+  // Page navigation
+  bot.hears("➡️ More", async (ctx) => {
+    const userId = String(ctx.from?.id);
+    const gym    = userId ? await getGymByTelegramId(ctx.env.DB, userId).catch(() => null) : null;
+    if (!gym) return;
+    await ctx.reply("More commands:", { reply_markup: ownerKeyboardPage2() });
+  });
+  bot.hears("⬅️ Back", async (ctx) => {
+    const userId = String(ctx.from?.id);
+    const gym    = userId ? await getGymByTelegramId(ctx.env.DB, userId).catch(() => null) : null;
+    if (!gym) return;
+    await ctx.reply("Main menu:", { reply_markup: ownerKeyboardPage1() });
+  });
+
+  // Page 2 buttons
+  bot.hears("✏️ Edit",    (ctx) => editCommand(ctx as any));
+  bot.hears("📊 Stats",   (ctx) => statsCommand(ctx as any));
+  bot.hears("📥 Export",  (ctx) => exportCommand(ctx as any));
+  bot.hears("💬 Feedback",(ctx) => feedbackCommand(ctx as any));
+
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   // 7. Fallback: any unrecognised text message — re-attach the correct keyboard

@@ -46,11 +46,12 @@ import { esc } from "../utils/format";
 // ── Public result type ────────────────────────────────────────────────────────
 
 export interface DailyCronResult {
-  date:               string;
-  gymsProcessed:      number;
-  notificationsSent:  number;
-  autoTerminations:   number;
-  errors:             number;
+  date:                  string;
+  gymsProcessed:         number;
+  expiryNotifications:   number;
+  billingRemindersSent:  number;
+  autoTerminations:      number;
+  errors:                number;
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -76,11 +77,12 @@ export async function runDailyCron(
   const nowOverride = overrideDate ? `${overrideDate} 09:00:00` : undefined;
 
   const result: DailyCronResult = {
-    date:              dateStr,
-    gymsProcessed:     0,
-    notificationsSent: 0,
-    autoTerminations:  0,
-    errors:            0,
+    date:                 dateStr,
+    gymsProcessed:        0,
+    expiryNotifications:  0,
+    billingRemindersSent: 0,
+    autoTerminations:     0,
+    errors:               0,
   };
 
   let gyms: Gym[];
@@ -96,8 +98,8 @@ export async function runDailyCron(
     try {
       const stats = await processGym(env, gym, dateStr, nowOverride);
       result.gymsProcessed++;
-      result.notificationsSent += stats.notificationsSent;
-      result.autoTerminations  += stats.autoTerminations;
+      result.expiryNotifications += stats.notificationsSent;
+      result.autoTerminations    += stats.autoTerminations;
     } catch (err) {
       console.error(`[cron] Unhandled error for gym ${gym.id} (${gym.gym_name}):`, err);
       result.errors++;
@@ -107,13 +109,19 @@ export async function runDailyCron(
 
   // ── Billing reminders — after member processing ────────────────────────────
   try {
-    await processBillingReminders(env, dateStr);
+    result.billingRemindersSent = await processBillingReminders(env, dateStr);
   } catch (err) {
     console.error("[cron] Billing reminder sweep failed:", err);
     result.errors++;
   }
 
-  console.log(`[cron] Finished for ${dateStr}:`, JSON.stringify(result));
+  console.log(
+    `[cron] Finished for ${dateStr}: ` +
+    `expiry=${result.expiryNotifications}, ` +
+    `billing=${result.billingRemindersSent}, ` +
+    `terminated=${result.autoTerminations}, ` +
+    `errors=${result.errors}`
+  );
   return result;
 }
 
@@ -326,35 +334,44 @@ function buildNotificationText(
 // Runs on days 5, 10, and 15 of the month for any active gym with an unpaid
 // pending bill.  Day 15 also pauses the gym (is_active = 0).
 
-async function processBillingReminders(env: Env, dateStr: string): Promise<void> {
+async function processBillingReminders(env: Env, dateStr: string): Promise<number> {
   // Day-of-month: 1 = 1st, 5 = 5th, etc.
   const dayOfMonth   = parseInt(dateStr.slice(8, 10), 10);
   const billingMonth = dateStr.slice(0, 7); // 'YYYY-MM'
 
-  if (![5, 10, 15].includes(dayOfMonth)) return;
+  if (![5, 10, 15].includes(dayOfMonth)) return 0;
 
   const pendingGyms = await getGymsPendingBills(env.DB, billingMonth);
-  if (pendingGyms.length === 0) return;
+  if (pendingGyms.length === 0) return 0;
 
   const upiId = env.DEVELOPER_UPI_ID ?? "";
+  let sent = 0;
 
   for (const item of pendingGyms) {
     try {
       const notifType = `bill_reminder_${dayOfMonth}` as
         "bill_reminder_5" | "bill_reminder_10" | "bill_reminder_15";
 
-      // Dedup — only one reminder per day per gym
+      // ── Dedup: one reminder per day per gym ────────────────────────────────
       const already = await wasBillingReminderSent(
         env.DB, item.gym_id, billingMonth, notifType
       );
-      if (already) continue;
+      if (already) {
+        console.log(
+          `[BILLING] gym ${item.gym_id}: already notified for ${notifType}, skipping`
+        );
+        continue;
+      }
 
+      // ── Build message ──────────────────────────────────────────────────────
       let message: string;
 
       if (dayOfMonth === 15) {
-        // Pause the gym before sending the message
+        // Pause the gym BEFORE sending — so even if send fails, service is paused
         await setGymActive(env.DB, item.gym_id, 0);
-        console.log(`[billing] Paused gym ${item.gym_id} (${item.gym_name}) — unpaid on day 15`);
+        console.log(
+          `[BILLING] gym ${item.gym_id}: paused (unpaid on day 15)`
+        );
 
         message =
           `🛑 Service paused for <b>${esc(item.gym_name)}</b>.\n\n` +
@@ -378,19 +395,29 @@ async function processBillingReminders(env: Env, dateStr: string): Promise<void>
           `Service continues for now.`;
       }
 
-      const sent = await sendMessage(env.BOT_TOKEN, item.telegram_user_id, message);
-      if (sent) {
+      // ── Send — only record dedup AFTER a confirmed send ────────────────────
+      const ok = await sendMessage(env.BOT_TOKEN, item.telegram_user_id, message);
+
+      if (ok) {
+        // Record AFTER success so a failed send is retried next cron run
         await recordBillingReminder(env.DB, item.gym_id, billingMonth, notifType);
         console.log(
-          `[billing] Sent ${notifType} to gym ${item.gym_id} (${item.gym_name})`
+          `[BILLING] gym ${item.gym_id}: day ${dayOfMonth}, ` +
+          `sent reminder to telegram_user_id=${item.telegram_user_id}`
         );
+        sent++;
       } else {
         console.error(
-          `[billing] Failed to send ${notifType} to gym ${item.gym_id}`
+          `[BILLING] gym ${item.gym_id}: send failed for ${notifType}`
         );
+        // Not recorded — next cron run will retry
       }
     } catch (err) {
-      console.error(`[billing] Error processing reminder for gym ${item.gym_id}:`, err);
+      console.error(
+        `[BILLING] gym ${item.gym_id}: error processing ${dateStr} reminder:`, err
+      );
     }
   }
+
+  return sent;
 }

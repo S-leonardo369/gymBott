@@ -68,7 +68,8 @@ export async function adminRunCronCommand(
     await ctx.reply(
       `✅ Cron ran for <b>${result.date}</b>:\n\n` +
       `🏋️ Gyms processed: <b>${result.gymsProcessed}</b>\n` +
-      `📬 Notifications sent: <b>${result.notificationsSent}</b>\n` +
+      `📅 Expiry notifications: <b>${result.expiryNotifications}</b>\n` +
+      `💳 Billing reminders: <b>${result.billingRemindersSent}</b>\n` +
       `❌ Auto-terminations: <b>${result.autoTerminations}</b>\n` +
       `⚠️ Errors: <b>${result.errors}</b>`,
       { parse_mode: "HTML" }
